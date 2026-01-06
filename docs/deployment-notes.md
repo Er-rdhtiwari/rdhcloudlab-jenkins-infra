@@ -53,3 +53,17 @@ Chronological notes from deploying this repo on an EC2 host, including issues en
 - `./scripts/jenkinsctl.sh status` shows running instance and IP/FQDN.
 - `dig +short jenkins.<root_domain>` resolves to the elastic IP.
 - `./scripts/jenkinsctl.sh password` returns the initial admin password.
+
+## After rebooting your management EC2
+- The Jenkins server keeps its Elastic IP and DNS, so you can still connect after a reboot of the management host.
+- Ensure your PEM (`~/.ssh/jenkins-key.pem`) still exists and `SSH_KEY_PATH` points to it; EBS root persists across reboots.
+- Reload env when needed:
+  ```bash
+  cd ~/poc/rdhcloudlab-jenkins-infra
+  git pull
+  source ./scripts/export-env.sh
+  ./scripts/jenkinsctl.sh status
+  ```
+- Connect directly: `ssh -i ~/.ssh/jenkins-key.pem ubuntu@jenkins.<root_domain>` or use `./scripts/jenkinsctl.sh ssh`.
+- If your public IP changed and SSH is CIDR-restricted, update `TF_VAR_allowed_ssh_cidr` in `.env` and run `./scripts/jenkinsctl.sh deploy` to refresh the security group.
+- If the Jenkins EC2 is stopped, start it: `./scripts/jenkinsctl.sh start` (EIP and DNS remain the same).
