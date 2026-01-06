@@ -53,6 +53,62 @@ Provision an independent Jenkins server on AWS EC2 with Terraform, an IAM instan
 4. `./scripts/jenkinsctl.sh deploy`
 5. Browse `http://jenkins.<root_domain>` (or the EIP if DNS not ready). Grab the initial admin password with `./scripts/jenkinsctl.sh password`.
 
+## Runbook: deploy from an existing EC2 host
+Follow these steps on the EC2 box that already has Terraform, AWS CLI, and admin credentials configured.
+
+### Prep
+- Verify tools and identity: `aws sts get-caller-identity && terraform -version && jq --version`.
+- Confirm your Route53 hosted zone exists for the root domain and note its hosted zone ID.
+- Ensure you have an EC2 key pair. Put the key pair name in `TF_VAR_key_name`; set `TF_VAR_public_key_path` if you want Terraform to import a public key file.
+
+### 1) Create remote state (required)
+- Pick unique names: `TF_BACKEND_BUCKET`, `TF_BACKEND_DYNAMODB_TABLE`, and (optionally) `TF_BACKEND_KEY`.
+- Create once per region:
+  ```bash
+  aws s3api create-bucket --bucket <bucket> --create-bucket-configuration LocationConstraint=<region>
+  aws dynamodb create-table --table-name <lock-table> --attribute-definitions AttributeName=LockID,AttributeType=S \
+    --key-schema AttributeName=LockID,KeyType=HASH --billing-mode PAY_PER_REQUEST
+  ```
+- Checkpoint: `aws s3api head-bucket --bucket <bucket>` and `aws dynamodb describe-table --table-name <lock-table>` both succeed.
+
+### 2) Configure environment
+- Copy and edit: `cp .env.example .env`
+- Set at minimum: `AWS_REGION`, optional `AWS_PROFILE`; `TF_VAR_project_name`, `TF_VAR_env`, `TF_VAR_instance_type`, `TF_VAR_key_name`, `TF_VAR_allowed_ssh_cidr`, `TF_VAR_root_domain`, `TF_VAR_jenkins_subdomain`, `TF_VAR_hosted_zone_id`, `TF_VAR_auto_shutdown_hours`, optional `TF_VAR_public_key_path`, optional `TF_VAR_jenkins_admin_email` (for TLS), `TF_BACKEND_BUCKET`, `TF_BACKEND_KEY`, `TF_BACKEND_REGION`, `TF_BACKEND_DYNAMODB_TABLE`.
+- Checkpoint: `cat .env` shows your values (no secrets beyond AWS profile).
+
+### 3) Load environment
+- Run `source .env`
+- Checkpoint: `env | grep TF_VAR_ | sort` prints your Terraform variables; `echo $TF_BACKEND_BUCKET $TF_BACKEND_DYNAMODB_TABLE` is non-empty.
+
+### 4) Initialize Terraform via helper
+- Run `./scripts/jenkinsctl.sh init`
+- Checkpoint: Terraform init completes with the remote backend configured (S3 bucket + DynamoDB lock).
+
+### 5) Deploy
+- Run `./scripts/jenkinsctl.sh deploy`
+- Expected resources: EC2 with IAM role `jenkins-user`, EIP, SG (22/80/443), Route53 A record `jenkins.<root_domain>`, user data installs Jenkins + Nginx, optional certbot, auto-shutdown cron.
+- Checkpoint: apply ends with outputs `instance_id`, `elastic_ip`, `jenkins_fqdn`, `ssh_command`.
+
+### 6) Verify status and DNS
+- Run `./scripts/jenkinsctl.sh status`
+- Ensure state is `running` and IP/FQDN are present.
+- DNS: `dig +short jenkins.<root_domain>` should resolve to the EIP (may take a minute).
+
+### 7) Access Jenkins
+- URL: `./scripts/jenkinsctl.sh url` (use IP until DNS propagates).
+- Initial admin password: `./scripts/jenkinsctl.sh password` (set `SSH_KEY_PATH` if your private key is not default).
+- Complete the Jenkins setup wizard in the browser.
+
+### 8) Operations
+- Stop/start/reboot: `./scripts/jenkinsctl.sh stop|start|reboot`
+- Update auto-shutdown hours: `./scripts/jenkinsctl.sh set-auto-shutdown <hours>`
+- Destroy everything: `./scripts/jenkinsctl.sh destroy`
+
+### 9) Troubleshooting tips
+- Check status first: `./scripts/jenkinsctl.sh status`
+- Inspect user data logs: `./scripts/jenkinsctl.sh ssh 'sudo journalctl -u cloud-final -n 200'`
+- Re-run DNS/certbot only after DNS points to the EIP.
+
 ## Operations (via jenkinsctl.sh)
 - `status` show instance id/state/IP/FQDN/URL
 - `start` / `stop` / `reboot`
