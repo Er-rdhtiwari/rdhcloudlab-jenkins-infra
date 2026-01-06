@@ -1,0 +1,122 @@
+#!/bin/bash
+set -euxo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+JENKINS_FQDN="${jenkins_fqdn}"
+ENABLE_SSM_AWS_CREDS="${enable_ssm_aws_creds}"
+SSM_PARAM_NAME="${ssm_param_name}"
+AWS_REGION="${aws_region}"
+JENKINS_ADMIN_EMAIL="${jenkins_admin_email}"
+
+apt-get update -y
+apt-get install -y curl gnupg2 ca-certificates lsb-release nginx jq awscli openjdk-17-jre-headless
+mkdir -p /etc/jenkins
+
+INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+AUTO_SHUTDOWN_HOURS=$(aws ec2 describe-tags --region "$AWS_REGION" --filters "Name=resource-id,Values=${INSTANCE_ID}" "Name=key,Values=AutoShutdownHours" --query "Tags[0].Value" --output text 2>/dev/null || echo "6")
+if [ "$AUTO_SHUTDOWN_HOURS" = "None" ] || [ -z "$AUTO_SHUTDOWN_HOURS" ]; then
+  AUTO_SHUTDOWN_HOURS="6"
+fi
+
+# Jenkins repo and install
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | tee /usr/share/keyrings/jenkins-keyring.asc >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" > /etc/apt/sources.list.d/jenkins.list
+apt-get update -y
+apt-get install -y jenkins
+systemctl enable --now jenkins
+
+# Nginx reverse proxy
+rm -f /etc/nginx/sites-enabled/default
+cat >/etc/nginx/sites-available/jenkins <<EOF
+server {
+    listen 80;
+    server_name ${jenkins_fqdn};
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+EOF
+ln -sf /etc/nginx/sites-available/jenkins /etc/nginx/sites-enabled/jenkins
+nginx -t
+systemctl enable --now nginx
+systemctl reload nginx
+
+# Optional TLS with Let's Encrypt (requires DNS pointed to this host)
+if [ -n "$JENKINS_ADMIN_EMAIL" ]; then
+  apt-get install -y certbot python3-certbot-nginx
+  certbot --nginx --non-interactive --agree-tos --redirect -m "$JENKINS_ADMIN_EMAIL" -d "$JENKINS_FQDN" || true
+fi
+
+# Auto-shutdown helper
+cat >/usr/local/bin/schedule-autoshutdown.sh <<EOF
+#!/bin/bash
+set -euo pipefail
+HOURS_FILE=/etc/jenkins/auto_shutdown_hours
+DEFAULT_HOURS="${AUTO_SHUTDOWN_HOURS}"
+
+HOURS="\${1:-}"
+if [ -z "\$HOURS" ]; then
+  if [ -f "\$HOURS_FILE" ]; then
+    HOURS=\$(cat "\$HOURS_FILE")
+  else
+    HOURS="\$DEFAULT_HOURS"
+  fi
+fi
+
+echo "\$HOURS" > "\$HOURS_FILE"
+MINUTES=\$((HOURS * 60))
+# Cancel any pending shutdown from a prior boot
+shutdown -c || true
+shutdown -h "+\$MINUTES"
+EOF
+chmod +x /usr/local/bin/schedule-autoshutdown.sh
+
+cat >/etc/cron.d/jenkins-autoshutdown <<'EOF'
+@reboot root /usr/local/bin/schedule-autoshutdown.sh
+EOF
+chmod 644 /etc/cron.d/jenkins-autoshutdown
+# Apply on first boot
+/usr/local/bin/schedule-autoshutdown.sh
+
+# Optional AWS creds via SSM SecureString (expects JSON keys AWS_ACCESS_KEY_ID/SECRET/DEFAULT_REGION)
+if [ "$ENABLE_SSM_AWS_CREDS" = "true" ]; then
+  PARAM_VALUE=$(aws ssm get-parameter --name "$SSM_PARAM_NAME" --with-decryption --region "$AWS_REGION" --query "Parameter.Value" --output text)
+  if echo "$PARAM_VALUE" | jq empty >/dev/null 2>&1; then
+    ACCESS_KEY=$(echo "$PARAM_VALUE" | jq -r '.AWS_ACCESS_KEY_ID // empty')
+    SECRET_KEY=$(echo "$PARAM_VALUE" | jq -r '.AWS_SECRET_ACCESS_KEY // empty')
+    SESSION_TOKEN=$(echo "$PARAM_VALUE" | jq -r '.AWS_SESSION_TOKEN // empty')
+    DEFAULT_REGION=$(echo "$PARAM_VALUE" | jq -r '.AWS_DEFAULT_REGION // "'"${aws_region}"'"')
+  else
+    ACCESS_KEY=$(echo "$PARAM_VALUE" | grep -E '^AWS_ACCESS_KEY_ID=' | cut -d= -f2- || true)
+    SECRET_KEY=$(echo "$PARAM_VALUE" | grep -E '^AWS_SECRET_ACCESS_KEY=' | cut -d= -f2- || true)
+    SESSION_TOKEN=$(echo "$PARAM_VALUE" | grep -E '^AWS_SESSION_TOKEN=' | cut -d= -f2- || true)
+    DEFAULT_REGION=$(echo "$PARAM_VALUE" | grep -E '^AWS_DEFAULT_REGION=' | cut -d= -f2- || echo "${aws_region}")
+  fi
+
+  cat >/etc/profile.d/jenkins_aws_creds.sh <<EOF
+export AWS_ACCESS_KEY_ID=${ACCESS_KEY}
+export AWS_SECRET_ACCESS_KEY=${SECRET_KEY}
+export AWS_SESSION_TOKEN=${SESSION_TOKEN}
+export AWS_DEFAULT_REGION=${DEFAULT_REGION}
+EOF
+  chmod 600 /etc/profile.d/jenkins_aws_creds.sh
+
+  mkdir -p /etc/systemd/system/jenkins.service.d
+  cat >/etc/systemd/system/jenkins.service.d/env.conf <<'EOF'
+[Service]
+EnvironmentFile=-/etc/profile.d/jenkins_aws_creds.sh
+EOF
+  systemctl daemon-reload
+  systemctl restart jenkins
+fi
