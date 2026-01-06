@@ -63,7 +63,7 @@ Follow these steps on the EC2 box that already has Terraform, AWS CLI, and admin
 
 ### 1) Create remote state (required)
 - Pick unique names: `TF_BACKEND_BUCKET`, `TF_BACKEND_DYNAMODB_TABLE`, and (optionally) `TF_BACKEND_KEY`.
-- Create once per region:
+- You can let `./scripts/jenkinsctl.sh init` create them automatically now, or pre-create once per region:
   ```bash
   aws s3api create-bucket --bucket <bucket> --create-bucket-configuration LocationConstraint=<region>
   aws dynamodb create-table --table-name <lock-table> --attribute-definitions AttributeName=LockID,AttributeType=S \
@@ -108,6 +108,21 @@ Follow these steps on the EC2 box that already has Terraform, AWS CLI, and admin
 - Check status first: `./scripts/jenkinsctl.sh status`
 - Inspect user data logs: `./scripts/jenkinsctl.sh ssh 'sudo journalctl -u cloud-final -n 200'`
 - Re-run DNS/certbot only after DNS points to the EIP.
+
+## Generate and use a new EC2 key pair (helper)
+Use this if you need to create the EC2 key pair for Jenkins from the EC2 host:
+- Make the helper executable (once): `chmod +x scripts/create-keypair.sh`
+- Optional AWS context: `export AWS_PROFILE=<profile>` and/or `export AWS_REGION=<region>`
+- Create the key pair and save the PEM locally (default `~/.ssh/jenkins-key.pem`): `./scripts/jenkinsctl.sh create-keypair jenkins-key`
+- Verify the PEM: `ls -l ~/.ssh/jenkins-key.pem`
+- Update `.env` to use it:
+  ```bash
+  sed -i 's/^TF_VAR_key_name=.*/TF_VAR_key_name=jenkins-key/' .env
+  grep -q '^SSH_KEY_PATH=' .env || echo 'SSH_KEY_PATH=~/.ssh/jenkins-key.pem' >> .env
+  ```
+- Reload env before deploy: `source .env`
+
+The helper refuses to overwrite an existing AWS key pair with the same name. `jenkinsctl.sh ssh/password` will use `SSH_KEY_PATH` when set.
 
 ## Operations (via jenkinsctl.sh)
 - `status` show instance id/state/IP/FQDN/URL

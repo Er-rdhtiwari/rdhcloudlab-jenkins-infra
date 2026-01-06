@@ -59,6 +59,9 @@ tf_init() {
   fi
   local key="${TF_BACKEND_KEY:-$key_default}"
   local region="${TF_BACKEND_REGION:-${AWS_REGION:-ap-south-1}}"
+
+  ensure_backend_resources "$region"
+
   local args=(
     -backend-config="bucket=${TF_BACKEND_BUCKET}"
     -backend-config="key=${key}"
@@ -136,4 +139,58 @@ jenkins_url() {
     ip="$(get_public_ip)"
     echo "http://${ip}"
   fi
+}
+
+ensure_backend_resources() {
+  local region="${1:-${TF_BACKEND_REGION:-${AWS_REGION:-ap-south-1}}}"
+  ensure_s3_bucket_exists "$TF_BACKEND_BUCKET" "$region"
+  ensure_dynamodb_table_exists "$TF_BACKEND_DYNAMODB_TABLE" "$region"
+}
+
+ensure_s3_bucket_exists() {
+  local bucket="$1"
+  local region="$2"
+  local aws_args=(--region "$region")
+  if [[ -n "${AWS_PROFILE:-}" ]]; then
+    aws_args+=(--profile "$AWS_PROFILE")
+  fi
+
+  if aws s3api head-bucket --bucket "$bucket" "${aws_args[@]}" >/dev/null 2>&1; then
+    log "S3 bucket '${bucket}' already exists"
+    return
+  fi
+
+  warn "S3 bucket '${bucket}' not found; creating it in region ${region}"
+  if [[ "$region" == "us-east-1" ]]; then
+    aws s3api create-bucket --bucket "$bucket" "${aws_args[@]}" >/dev/null
+  else
+    aws s3api create-bucket --bucket "$bucket" --create-bucket-configuration LocationConstraint="$region" "${aws_args[@]}" >/dev/null
+  fi
+  aws s3api head-bucket --bucket "$bucket" "${aws_args[@]}" >/dev/null
+  log "Created S3 bucket '${bucket}'"
+}
+
+ensure_dynamodb_table_exists() {
+  local table="$1"
+  local region="$2"
+  local aws_args=(--region "$region")
+  if [[ -n "${AWS_PROFILE:-}" ]]; then
+    aws_args+=(--profile "$AWS_PROFILE")
+  fi
+
+  if aws dynamodb describe-table --table-name "$table" "${aws_args[@]}" >/dev/null 2>&1; then
+    log "DynamoDB table '${table}' already exists"
+    return
+  fi
+
+  warn "DynamoDB table '${table}' not found; creating it in region ${region}"
+  aws dynamodb create-table \
+    --table-name "$table" \
+    --attribute-definitions AttributeName=LockID,AttributeType=S \
+    --key-schema AttributeName=LockID,KeyType=HASH \
+    --billing-mode PAY_PER_REQUEST \
+    "${aws_args[@]}" >/dev/null
+
+  aws dynamodb wait table-exists --table-name "$table" "${aws_args[@]}" >/dev/null
+  log "Created DynamoDB table '${table}'"
 }
