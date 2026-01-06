@@ -14,7 +14,7 @@ apt-get install -y curl gnupg2 ca-certificates lsb-release nginx jq awscli openj
 mkdir -p /etc/jenkins
 
 INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-AUTO_SHUTDOWN_HOURS=$(aws ec2 describe-tags --region "$AWS_REGION" --filters "Name=resource-id,Values=${INSTANCE_ID}" "Name=key,Values=AutoShutdownHours" --query "Tags[0].Value" --output text 2>/dev/null || echo "6")
+AUTO_SHUTDOWN_HOURS=$(aws ec2 describe-tags --region "$AWS_REGION" --filters "Name=resource-id,Values=$INSTANCE_ID" "Name=key,Values=AutoShutdownHours" --query "Tags[0].Value" --output text 2>/dev/null || echo "6")
 if [ "$AUTO_SHUTDOWN_HOURS" = "None" ] || [ -z "$AUTO_SHUTDOWN_HOURS" ]; then
   AUTO_SHUTDOWN_HOURS="6"
 fi
@@ -63,9 +63,9 @@ cat >/usr/local/bin/schedule-autoshutdown.sh <<EOF
 #!/bin/bash
 set -euo pipefail
 HOURS_FILE=/etc/jenkins/auto_shutdown_hours
-DEFAULT_HOURS="${AUTO_SHUTDOWN_HOURS}"
+DEFAULT_HOURS="$AUTO_SHUTDOWN_HOURS"
 
-HOURS="\${1:-}"
+HOURS="$${1:-}"
 if [ -z "\$HOURS" ]; then
   if [ -f "\$HOURS_FILE" ]; then
     HOURS=\$(cat "\$HOURS_FILE")
@@ -105,10 +105,10 @@ if [ "$ENABLE_SSM_AWS_CREDS" = "true" ]; then
   fi
 
   cat >/etc/profile.d/jenkins_aws_creds.sh <<EOF
-export AWS_ACCESS_KEY_ID=${ACCESS_KEY}
-export AWS_SECRET_ACCESS_KEY=${SECRET_KEY}
-export AWS_SESSION_TOKEN=${SESSION_TOKEN}
-export AWS_DEFAULT_REGION=${DEFAULT_REGION}
+export AWS_ACCESS_KEY_ID=$ACCESS_KEY
+export AWS_SECRET_ACCESS_KEY=$SECRET_KEY
+export AWS_SESSION_TOKEN=$SESSION_TOKEN
+export AWS_DEFAULT_REGION=$DEFAULT_REGION
 EOF
   chmod 600 /etc/profile.d/jenkins_aws_creds.sh
 
