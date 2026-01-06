@@ -3,12 +3,24 @@
 # Usage: source ./scripts/export-env.sh
 # Notes:
 #   - Must be sourced so the exports land in your shell: `. scripts/export-env.sh`
-#   - Exits non-zero if required variables are missing.
-
-set -euo pipefail
+#   - Exits non-zero if required variables are missing, but will not close your shell if sourced.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
+
+is_sourced() {
+  [[ "${BASH_SOURCE[0]}" != "$0" ]]
+}
+
+die() {
+  local msg="$1"
+  echo "$msg" >&2
+  if is_sourced; then
+    return 1
+  else
+    exit 1
+  fi
+}
 
 REQUIRED_VARS=(
   AWS_REGION
@@ -23,8 +35,7 @@ REQUIRED_VARS=(
 )
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Missing ${ENV_FILE}. Copy .env.example to .env and fill values." >&2
-  return 1 2>/dev/null || exit 1
+  die "Missing ${ENV_FILE}. Copy .env.example to .env and fill values."
 fi
 
 # Export everything in .env
@@ -41,10 +52,12 @@ for var in "${REQUIRED_VARS[@]}"; do
 done
 
 if (( ${#missing[@]} > 0 )); then
-  echo "Exported variables, but these required ones are empty or missing:" >&2
-  printf "  - %s\n" "${missing[@]}" >&2
-  echo "Update .env and re-run: source ./scripts/export-env.sh" >&2
-  return 1 2>/dev/null || exit 1
+  {
+    echo "Exported variables, but these required ones are empty or missing:"
+    printf "  - %s\n" "${missing[@]}"
+    echo "Update .env and re-run: source ./scripts/export-env.sh"
+  } >&2
+  die "Missing required variables"
 fi
 
 echo "Environment exported from ${ENV_FILE}."
