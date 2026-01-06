@@ -48,7 +48,7 @@ Provision an independent Jenkins server on AWS EC2 with Terraform, an IAM instan
 
 ## Quickstart
 1. Copy `.env.example` to `.env` and fill values (AWS region/profile, Route53 zone, key pair, allowed SSH CIDR, domain, etc.).
-2. `source .env`
+2. Export env vars: `source .env` (or `source ./scripts/export-env.sh` to export and validate required vars)
 3. `./scripts/jenkinsctl.sh init`
 4. `./scripts/jenkinsctl.sh deploy`
 5. Browse `http://jenkins.<root_domain>` (or the EIP if DNS not ready). Grab the initial admin password with `./scripts/jenkinsctl.sh password`.
@@ -77,7 +77,7 @@ Follow these steps on the EC2 box that already has Terraform, AWS CLI, and admin
 - Checkpoint: `cat .env` shows your values (no secrets beyond AWS profile).
 
 ### 3) Load environment
-- Run `source .env`
+- Run `source .env` (or `source ./scripts/export-env.sh` to export and validate required vars)
 - Checkpoint: `env | grep TF_VAR_ | sort` prints your Terraform variables; `echo $TF_BACKEND_BUCKET $TF_BACKEND_DYNAMODB_TABLE` is non-empty.
 
 ### 4) Initialize Terraform via helper
