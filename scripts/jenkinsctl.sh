@@ -27,6 +27,7 @@ Usage: jenkinsctl.sh <command> [args]
 
 Commands:
   help                    Show this help
+  create-keypair NAME [PATH]  Create an EC2 key pair via AWS CLI and save PEM locally (default ~/.ssh/NAME.pem)
   init                    terraform init
   deploy                  terraform apply -auto-approve
   destroy                 terraform destroy -auto-approve
@@ -52,6 +53,9 @@ main() {
   case "$cmd" in
     help|-h|--help)
       usage
+      ;;
+    create-keypair)
+      "$SCRIPT_DIR/create-keypair.sh" "$@"
       ;;
     init)
       tf_init
