@@ -66,6 +66,7 @@ aws ec2 describe-security-group-rules \
 - SSH test (from management EC2):
 ```bash
 ssh -i ~/.ssh/jenkins-key.pem ubuntu@jenkins.rdhcloudlab.com
+ssh -i ~/.ssh/jenkins-key.pem ubuntu@13.200.26.100  # or jenkins.rdhcloudlab.com
 ```
 
 ## Other notes
