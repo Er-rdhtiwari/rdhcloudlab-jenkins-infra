@@ -39,9 +39,10 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_key_pair" "imported" {
-  count      = var.public_key_path != "" ? 1 : 0
-  key_name   = var.key_name
-  public_key = file(var.public_key_path)
+  # Only import a key when a readable public key path is provided.
+  for_each = var.public_key_path != "" && fileexists(var.public_key_path) ? { import = var.public_key_path } : {}
+  key_name = var.key_name
+  public_key = file(each.value)
 }
 
 data "aws_iam_policy_document" "assume_role" {
