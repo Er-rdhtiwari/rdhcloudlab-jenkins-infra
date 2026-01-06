@@ -46,6 +46,10 @@ Chronological notes from deploying this repo on an EC2 host, including issues en
 - Stop/start/reboot: `./scripts/jenkinsctl.sh stop|start|reboot`
 - Destroy: `./scripts/jenkinsctl.sh destroy`
 
+### Check auto-shutdown timer on the Jenkins host
+- Run on the Jenkins server: `bash /path/to/repo/scripts/time-remaining.sh`
+- Shows configured hours (`/etc/jenkins/auto_shutdown_hours`), the scheduled shutdown timestamp from systemd, and minutes remaining. Requires sudo to read the scheduled shutdown file.
+
 ## Validation checklist (quick)
 - `source ./scripts/export-env.sh` shows no missing vars.
 - `./scripts/jenkinsctl.sh init` completes (creates backend if needed).
